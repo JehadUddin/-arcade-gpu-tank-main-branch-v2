@@ -220,7 +220,7 @@ export class GameScreen extends Screen {
        const res = enemy.update(ts, playerPos);
        if (res.didShoot && res.muzzlePos && res.dir) {
            const quat = Quaternion.createFromEuler(enemy.rotation, 0, 0, 'YXZ');
-           this.spawnProjectile(ProjectileType.SHELL, res.muzzlePos[0], res.muzzlePos[1], res.muzzlePos[2], quat, 'enemy', 1.0);
+           this.spawnProjectile(ProjectileType.SHELL, res.muzzlePos[0], res.muzzlePos[1], res.muzzlePos[2], res.dir, 'enemy', 1.0);
            
            const exp = this.explosionPool.acquire() as Explosion;
            if (exp) {

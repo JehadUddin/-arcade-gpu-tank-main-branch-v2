@@ -24,6 +24,8 @@ Tracking all issues, from critical bugs to minor suggestions.
 -   **[RESOLVED] PHYSICS STEERING**: Refactored hull rotation to use angular velocity, allowing realistic environmental interactions and "bounce" during collisions.
 -   **[RESOLVED] AIMING STABILITY**: Camera auto-follow now respects manual interaction, preventing the viewpoint from snapping while the player is actively tracking targets.
 -   **[RESOLVED] COLLISION INSTABILITY**: Tank collided incorrectly and spun out of control because `SetRotation` overrode the physics solver every frame. Fixed by letting Pitch and Roll resolve dynamically through the Jolt physics engine while injecting precise target angular velocity for the Yaw steering.
+-   **[RESOLVED] ENEMY PHYSICS & AI**: Refactored Enemy.ts to use the new robust physics scheme for rotation and movement, preventing collision jitter. Added basic ray-based obstacle avoidance so enemies path around static walls instead of driving into them endlessly.
+-   **[RESOLVED] CLIPPING / FALLING THROUGH MAP**: A symptom of the previous physics instability setup (`AddTorque`) caused occasional extreme infinite forces applying downwards at the corners of the Box boundaries when driving over bumpy terrain heightmaps, pushing rigidbodies into the terrain plane until they tunneled under the floor. This bug was fixed by switching from massive torque forces `AddTorque` to precise target angular velocity resolution `SetAngularVelocity`. Also moved initial spawning `y` values higher up (so tanks drop into the action safely instead of spawning partially enclosed in hills), and added a catch-all teleport `posY < -5.0` check on the Tank to guarantee we never stay stuck in the void.
 
 ## Warning (Unexpected Behavior)
 

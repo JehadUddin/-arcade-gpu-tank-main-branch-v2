@@ -68,6 +68,7 @@ export class Enemy {
   physicsBody: any;
   
   rotation: number = 0;
+  velocity: number = 0;
   recoil: number = 0;
   shootCooldown: number = 0;
   hp: number = 100;
@@ -81,15 +82,15 @@ export class Enemy {
     }
 
     this.physicsBody = gfx3JoltManager.addBox({
-      width: 1.5, height: 0.8, depth: 2.2, // Increased height for stability
-      x, y: 0.4, z, // Lowered start Y to touch ground (0.8 / 2 = 0.4)
+      width: 2.0, height: 1.2, depth: 2.4, // Encompass body and tracks
+      x, y: y + 2.0, z, // Drop from air to handle uneven terrain correctly
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
       settings: { 
           mAngularDamping: 15.0, 
           mLinearDamping: 2.0,
-          mMassPropertiesOverride: 1500.0,
-          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.3, 0) // Lower COM
+          mMassPropertiesOverride: 10000.0,
+          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.3, 0)
       }
     });
   }
@@ -108,66 +109,75 @@ export class Enemy {
 
     // Jolt Logic
     const pos = this.physicsBody.body.GetPosition();
+
+    if (pos.GetY() < -5.0) {
+        this.hp = 0; // Destroy enemy if it falls off the map
+        return { didShoot: false };
+    }
+
     const qPhysics = this.physicsBody.body.GetRotation();
     const currentQuat = new Quaternion(qPhysics.GetW(), qPhysics.GetX(), qPhysics.GetY(), qPhysics.GetZ());
     
-    // Extract Yaw from current physics orientation
-    const forwardVec = currentQuat.rotateVector([0, 0, -1]); // Standardize to -Z as Forward
-    this.rotation = Math.atan2(-forwardVec[0], -forwardVec[2]);
-
     const myPos = JOLT_RVEC3_TO_VEC3(pos);
     const dx = targetPos[0] - myPos[0];
     const dz = targetPos[2] - myPos[2];
     const dist = Math.sqrt(dx*dx + dz*dz);
-    const targetAngle = Math.atan2(-dx, -dz);
-    
     const PI2 = Math.PI * 2;
-    let angleDiff = (targetAngle - this.rotation) % PI2;
-    if (angleDiff > Math.PI) angleDiff -= PI2;
-    if (angleDiff < -Math.PI) angleDiff += PI2;
+    let targetAngle = Math.atan2(-dx, -dz);
     
-    // Steering stability
-    const turnVel = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff) * 5.0, rotSpeed);
-    const turnAlpha = 1.0 - Math.exp(-25.0 * (ts / 1000));
-    const curAngVel = this.physicsBody.body.GetAngularVelocity();
+    // OBSTACLE AVOIDANCE
+    const castStartY = pos.GetY() + 0.5;
+    const qRot = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
+    const fLeft = qRot.rotateVector([-0.7, 0, -1.0]);
+    const fRight = qRot.rotateVector([0.7, 0, -1.0]);
     
+    const rayDist = 12.0;
+    const lRay = gfx3JoltManager.createRay(pos.GetX(), castStartY, pos.GetZ(), pos.GetX() + fLeft[0] * rayDist, castStartY, pos.GetZ() + fLeft[2] * rayDist);
+    const rRay = gfx3JoltManager.createRay(pos.GetX(), castStartY, pos.GetZ(), pos.GetX() + fRight[0] * rayDist, castStartY, pos.GetZ() + fRight[2] * rayDist);
+    
+    // Ignore hits that are too close (likely our own body) by enforcing fraction > 0.15
+    const lHit = lRay.fraction < 1.0 && lRay.fraction > 0.15;
+    const rHit = rRay.fraction < 1.0 && rRay.fraction > 0.15;
+    
+    let isAvoiding = false;
+    if (lHit && !rHit) {
+        targetAngle += 1.2;
+        isAvoiding = true;
+    } else if (rHit && !lHit) {
+        targetAngle -= 1.2;
+        isAvoiding = true;
+    } else if (lHit && rHit) {
+        targetAngle += lRay.fraction < rRay.fraction ? 1.5 : -1.5;
+        isAvoiding = true;
+    }
+
+    let bodyYawDiff = ((targetAngle - this.rotation) % PI2 + PI2) % PI2;
+    if (bodyYawDiff > Math.PI) bodyYawDiff -= Math.PI * 2;
+    
+    // Faster turning when avoiding obstacles
+    const currentRotSpeed = isAvoiding ? rotSpeed * 1.5 : rotSpeed;
+    this.rotation += Math.sign(bodyYawDiff) * Math.min(Math.abs(bodyYawDiff), currentRotSpeed * (ts / 1000));
+    
+    const uprightQuat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
+    
+    // STABILIZATION: Neutralize Pitch and Roll via Angular Velocity
+    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
+    const tiltErrorX = -currentUpVec[2]; 
+    const tiltErrorZ = currentUpVec[0];  
+
+    const currentForward = currentQuat.rotateVector([0, 0, -1]);
+    const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+    let physYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    if (physYawDiff > Math.PI) physYawDiff -= Math.PI * 2;
+    
+    // Aggressively steer towards target yaw and stabilize Pitch/Roll
+    const targetAngularVelY = physYawDiff * 15.0; 
     gfx3JoltManager.bodyInterface.SetAngularVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(curAngVel.GetX() * 0.2, UT.LERP(curAngVel.GetY(), turnVel, turnAlpha), curAngVel.GetZ() * 0.2)
+        new Gfx3Jolt.Vec3(tiltErrorX * 12.0, targetAngularVelY, tiltErrorZ * 12.0)
     );
 
-    // STABILIZATION TORQUE: Neutralize Pitch and Roll
-    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
-    const stabilityAlpha = 1200000.0; // Proportional to enemy mass 1500
-    gfx3JoltManager.bodyInterface.AddTorque(
-        this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(-currentUpVec[2] * stabilityAlpha, 0, currentUpVec[0] * stabilityAlpha)
-    );
-
-    let quat = currentQuat;
-    
-    // Smooth visual banking (Mesh only)
-    let targetUp: vec3 = [0, 1, 0];
-    const ray = gfx3JoltManager.createRay(pos.GetX(), pos.GetY() + 0.5, pos.GetZ(), pos.GetX(), pos.GetY() - 2.0, pos.GetZ());
-    if (ray.normal && ray.normal.GetY() > 0.5) {
-        targetUp = [ray.normal.GetX(), ray.normal.GetY(), ray.normal.GetZ()];
-    }
-    
-    this.currentUp = UT.VEC3_LERP(this.currentUp, targetUp, 4.0 * (ts / 1000));
-    this.currentUp = UT.VEC3_NORMALIZE(this.currentUp);
-
-    const up: vec3 = [0, 1, 0];
-    let axis = UT.VEC3_CROSS(up, this.currentUp);
-    const dot = UT.VEC3_DOT(up, this.currentUp);
-    if (UT.VEC3_LENGTH(axis) > 0.001 && Math.abs(dot) < 0.999) {
-        axis = UT.VEC3_NORMALIZE(axis);
-        const clampedDot = Math.max(-1, Math.min(1, dot));
-        const angle = Math.acos(clampedDot);
-        const alignQ = Quaternion.createFromAxisAngle(axis, angle);
-        quat = alignQ.mul(quat.w, quat.x, quat.y, quat.z);
-    }
-
-    this.visualQuat = quat;
+    this.visualQuat = currentQuat;
 
     // Movement logic
     let throttle = 0;
@@ -177,18 +187,27 @@ export class Enemy {
         throttle = -0.5; 
     }
 
-    // MOVEMENT STABILITY: Smoothed velocity matching using [0, 0, -1] as forward
-    const forwardVecActual = currentQuat.rotateVector([0, 0, -1]);
+    const targetVelocity = throttle * speed;
+    const isBraking = (throttle > 0 && this.velocity < 0) || (throttle < 0 && this.velocity > 0);
+    const accelRate = throttle !== 0 ? (isBraking ? -20.0 : -6.0) : -15.0;
+    const accelAlphaValue = 1.0 - Math.exp(accelRate * (ts / 1000));
+    this.velocity = UT.LERP(this.velocity, targetVelocity, accelAlphaValue);
+
+    // MOVEMENT STABILITY: Smoothed velocity matching using strictly Yaw forward
+    const forwardVecActual = uprightQuat.rotateVector([0, 0, -1]);
     const currentJoltVel = this.physicsBody.body.GetLinearVelocity();
-    const targetLinearVel = UT.VEC3_SCALE(forwardVecActual, throttle * speed);
     
     const velAlpha = 1.0 - Math.exp(-20.0 * (ts / 1000));
-    const nextVX = UT.LERP(currentJoltVel.GetX(), targetLinearVel[0], velAlpha);
-    const nextVZ = UT.LERP(currentJoltVel.GetZ(), targetLinearVel[2], velAlpha);
+    const targetVelX = forwardVecActual[0] * this.velocity;
+    const targetVelZ = forwardVecActual[2] * this.velocity;
 
     gfx3JoltManager.bodyInterface.SetLinearVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(nextVX, currentJoltVel.GetY(), nextVZ)
+        new Gfx3Jolt.Vec3(
+            UT.LERP(currentJoltVel.GetX(), targetVelX, velAlpha), 
+            currentJoltVel.GetY(), 
+            UT.LERP(currentJoltVel.GetZ(), targetVelZ, velAlpha)
+        )
     );
     
     let didShoot = false;
@@ -196,8 +215,8 @@ export class Enemy {
     let dir: vec3 | undefined = undefined;
 
     // Shoot Logic
-    if (dist < 40 && Math.abs(angleDiff) < 0.2 && this.shootCooldown <= 0) {
-        const muzzleData = this.getMuzzleData(quat);
+    if (dist < 40 && Math.abs(bodyYawDiff) < 0.2 && this.shootCooldown <= 0) {
+        const muzzleData = this.getMuzzleData(this.visualQuat);
         muzzlePos = muzzleData.muzzlePos;
         dir = muzzleData.dir;
         this.shootCooldown = 2.5; // Slightly longer cooldown
@@ -207,6 +226,7 @@ export class Enemy {
     
     return { didShoot, muzzlePos, dir };
   }
+
   
   getMuzzleData(q: Quaternion): { muzzlePos: vec3, dir: vec3 } {
     const direction = q.rotateVector([0, 0, -1]); 

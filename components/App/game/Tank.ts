@@ -61,7 +61,7 @@ export class Tank {
 
     this.physicsBody = gfx3JoltManager.addBox({
       width: 3.45, height: 1.2, depth: 3.6, // Increased height for better collision volume
-      x: 0, y: 0.6, z: 0, // Lowered Y to touch the ground (height 1.2 / 2 = 0.6)
+      x: 0, y: 5.0, z: 0, // Drop from air to handle uneven terrain correctly
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
       settings: { 
@@ -138,16 +138,10 @@ export class Tank {
     // Create an upright version of the tank's yaw
     const uprightQuat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
     
-    // STABILIZATION TORQUE: Neutralize Pitch and Roll (X, Z) to keep the tank upright.
+    // STABILIZATION: Neutralize Pitch and Roll via Angular Velocity
     const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
     const tiltErrorX = -currentUpVec[2]; 
     const tiltErrorZ = currentUpVec[0];  
-    const stabilityAlpha = 6000000.0;
-    
-    gfx3JoltManager.bodyInterface.AddTorque(
-        this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(tiltErrorX * stabilityAlpha, 0, tiltErrorZ * stabilityAlpha)
-    );
 
     // Apply strict yaw rotation by calculating angular velocity needed to reach this.rotation
     const currentForward = currentQuat.rotateVector([0, 0, -1]);
@@ -155,12 +149,11 @@ export class Tank {
     let bodyYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
     if (bodyYawDiff > Math.PI) bodyYawDiff -= Math.PI * 2;
     
-    const currentAngularVel = this.physicsBody.body.GetAngularVelocity();
-    // Aggressively steer towards target yaw
+    // Aggressively steer towards target yaw and stabilize Pitch/Roll
     const targetAngularVelY = bodyYawDiff * 15.0; 
     gfx3JoltManager.bodyInterface.SetAngularVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(currentAngularVel.GetX(), targetAngularVelY, currentAngularVel.GetZ())
+        new Gfx3Jolt.Vec3(tiltErrorX * 12.0, targetAngularVelY, tiltErrorZ * 12.0)
     );
 
     // STRICT ARCADE FORWARD MOVEMENT
@@ -192,6 +185,16 @@ export class Tank {
     let visualQuat = currentQuat;
 
     const pos = this.physicsBody.body.GetPosition();
+    
+    // Safety check: if tank falls through map, teleport to sky
+    if (pos.GetY() < -5.0) {
+        gfx3JoltManager.bodyInterface.SetPosition(
+            this.physicsBody.body.GetID(), 
+            new Gfx3Jolt.Vec3(0, 15.0, 0), 
+            Gfx3Jolt.EActivation_Activate
+        );
+        gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(0, 0, 0));
+    }
 
     // Sync Visuals
     const q = visualQuat;
