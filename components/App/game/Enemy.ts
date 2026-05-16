@@ -95,7 +95,7 @@ export class Enemy {
           mAngularDamping: 15.0, 
           mLinearDamping: 2.0,
           mMassPropertiesOverride: 10000.0,
-          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -1.5, 0)
+          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.4, 0)
       }
     });
   }
@@ -163,20 +163,26 @@ export class Enemy {
     const currentRotSpeed = isAvoiding ? rotSpeed * 1.5 : rotSpeed;
     this.rotation += Math.sign(bodyYawDiff) * Math.min(Math.abs(bodyYawDiff), currentRotSpeed * (ts / 1000));
     
-    const uprightQuat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
-    
-    // STRICT ARCADE YAW ROTATION
     const currentForward = currentQuat.rotateVector([0, 0, -1]);
     const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+    const uprightQuat = Quaternion.createFromEuler(currentYaw, 0, 0, 'YXZ');
+    
+    // STABILIZATION: Neutralize Pitch and Roll via Angular Velocity
+    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
+    const tiltErrorX = -currentUpVec[2]; 
+    const tiltErrorZ = currentUpVec[0];  
+
+    // STRICT ARCADE YAW ROTATION
     let physYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
     if (physYawDiff > Math.PI) physYawDiff -= Math.PI * 2;
+    // Cap windup
+    this.rotation = currentYaw + Math.max(-0.5, Math.min(0.5, physYawDiff));
     
-    // Only override the Y axis for steering, let Jolt physics handle pitch/roll from gravity and bumps
-    const currentAngularVel = this.physicsBody.body.GetAngularVelocity();
+    // Aggressively steer towards target yaw and stabilize Pitch/Roll
     const targetAngularVelY = physYawDiff * 15.0; 
     gfx3JoltManager.bodyInterface.SetAngularVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(currentAngularVel.GetX(), targetAngularVelY, currentAngularVel.GetZ())
+        new Gfx3Jolt.Vec3(tiltErrorX * 12.0, targetAngularVelY, tiltErrorZ * 12.0)
     );
 
     this.visualQuat = currentQuat;
@@ -240,7 +246,9 @@ export class Enemy {
     const origin: vec3 = [pos.GetX(), pos.GetY() - 0.15, pos.GetZ()];
     const bodyMatrix = UT.MAT4_TRANSFORM(origin, [0, 0, 0], [1, 1, 1], q);
     
-    const localYaw = (this.turretYaw - this.rotation);
+    const currentForward = q.rotateVector([0, 0, -1]);
+    const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+    const localYaw = (this.turretYaw - currentYaw);
     const localYawQ = Quaternion.createFromEuler(localYaw, 0, 0, 'YXZ');
 
     const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
@@ -286,7 +294,9 @@ export class Enemy {
     syncRigid(Enemy.trackRMesh, [1.425, -0.15, 0]);
     syncRigid(Enemy.engineMesh, [0, 0.3, 1.8]);
 
-    const localYaw = (this.turretYaw - this.rotation);
+    const currentForward = finalVisualQ.rotateVector([0, 0, -1]);
+    const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+    const localYaw = (this.turretYaw - currentYaw);
     const localYawQ = Quaternion.createFromEuler(localYaw, 0, 0, 'YXZ');
 
     const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
