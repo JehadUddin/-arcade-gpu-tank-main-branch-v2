@@ -65,6 +65,9 @@ export class GameScreen extends Screen {
   rightClickFire: boolean = false;
   lastMouseManualTS: number = 0;
   
+  mouseX: number = 0;
+  mouseY: number = 0;
+
   constructor() {
     super();
     this.camera = new Gfx3Camera(0);
@@ -138,14 +141,14 @@ export class GameScreen extends Screen {
     inputManager.registerAction('keyboard', 'ShiftLeft', 'FIRE_ALT'); 
     inputManager.registerAction('keyboard', 'KeyE', 'FIRE_ALT'); 
 
-    inputManager.setPointerLockEnabled(true);
+    inputManager.setPointerLockEnabled(false);
     eventManager.subscribe(inputManager, 'E_MOUSE_MOVE', this, this.handleMouseMove);
 
     this.camera.setPosition(0, 12, 20); // Start at cy=0 position offset (0, 12, distance)
     this.camera.lookAt(0, 0, 0);
     this.cameraYaw = 0; // aimYaw
-    this.cameraPitch = 0.15; // aimPitch
-    this.cameraDistance = 20;
+    this.cameraPitch = 0.5; // aimPitch
+    this.cameraDistance = 15;
     this.camera.getView().setBgColor(0.53, 0.81, 0.92, 1.0); // Sky blue
     
     const tankP = this.tank.physicsBody.body.GetPosition();
@@ -154,13 +157,8 @@ export class GameScreen extends Screen {
   }
 
   handleMouseMove = (data: any) => {
-    if (inputManager.isPointerLockCaptured() || inputManager.isMouseDown()) {
-       this.cameraYaw -= data.movementX * 0.005;
-       this.cameraPitch += data.movementY * 0.005;
-       this.lastMouseManualTS = Date.now();
-       
-       this.cameraPitch = Math.max(0.05, Math.min(1.2, this.cameraPitch));
-    }
+    this.mouseX = data.clientX;
+    this.mouseY = data.clientY;
   };
 
   update(ts: number) {
@@ -195,14 +193,56 @@ export class GameScreen extends Screen {
     combinedMoveDir.y = Math.max(-1, Math.min(1, combinedMoveDir.y));
 
     const currentFiringInput = inputManager.isActiveAction('FIRE') || 
-                          (inputManager.isMouseDown() && inputManager.isPointerLockCaptured() && !this.rightClickFire);
+                          (inputManager.isMouseDown() && !this.rightClickFire);
     const isFiringNormal = this.virtualFireNormal || currentFiringInput;
     const isFiringGrenade = this.virtualFireGrenade || this.rightClickFire || inputManager.isActiveAction('FIRE_ALT');
 
     this.level.update(ts);
 
-    // Spawn Projectiles from Tank (cameraYaw acts as aimYaw)
-    const shots = this.tank.update(ts, combinedMoveDir, isFiringNormal, isFiringGrenade, this.cameraYaw, this.cameraPitch);
+    // ARCADE CAMERA: follow the tank's rotation smoothly
+    let diff = ((this.tank.rotation - this.cameraYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    if (diff > Math.PI) diff -= Math.PI * 2;
+    this.cameraYaw += diff * 4.0 * (ts / 1000); 
+
+    // Compute aimYaw and aimPitch from Mouse raycast
+    let aimYaw = this.cameraYaw;
+    let aimPitch = this.cameraPitch;
+    const tankP = this.tank.physicsBody.body.GetPosition();
+    const playerPos: vec3 = [tankP.GetX(), tankP.GetY(), tankP.GetZ()];
+    
+    if (playerPos && !isNaN(playerPos[0])) {
+        const view = this.camera.getView();
+        const nx = (this.mouseX / window.innerWidth) * 2 - 1;
+        const ny = -(this.mouseY / window.innerHeight) * 2 + 1;
+        
+        const invProjView = UT.MAT4_INVERT(view.getViewProjectionClipMatrix());
+        const nearVec = UT.MAT4_MULTIPLY_BY_VEC4(invProjView, [nx, ny, 0.0, 1]);
+        const farVec = UT.MAT4_MULTIPLY_BY_VEC4(invProjView, [nx, ny, 1.0, 1]);
+        if (nearVec[3] !== 0 && farVec[3] !== 0) {
+            const rayOrigin = [nearVec[0]/nearVec[3], nearVec[1]/nearVec[3], nearVec[2]/nearVec[3]] as vec3;
+            const rayFar = [farVec[0]/farVec[3], farVec[1]/farVec[3], farVec[2]/farVec[3]] as vec3;
+            const rayDir = UT.VEC3_NORMALIZE(UT.VEC3_SUBTRACT(rayFar, rayOrigin));
+            
+            // Ground intersection essentially
+            const t = (0.5 - rayOrigin[1]) / rayDir[1];
+            if (t > 0) {
+                const hitPoint = [
+                    rayOrigin[0] + rayDir[0] * t,
+                    0.5,
+                    rayOrigin[2] + rayDir[2] * t
+                ];
+                
+                const dx = hitPoint[0] - playerPos[0];
+                const dz = hitPoint[2] - playerPos[2];
+                aimYaw = Math.atan2(-dx, -dz);
+                const dist = Math.sqrt(dx*dx + dz*dz);
+                aimPitch = Math.atan2(0.85, dist);
+            }
+        }
+    }
+
+    // Spawn Projectiles from Tank
+    const shots = this.tank.update(ts, combinedMoveDir, isFiringNormal, isFiringGrenade, aimYaw, aimPitch);
     
     if (shots.normal) {
        this.spawnProjectile(ProjectileType.SHELL, shots.muzzlePos[0], shots.muzzlePos[1], shots.muzzlePos[2], shots.muzzleDir, 'player');
@@ -214,14 +254,10 @@ export class GameScreen extends Screen {
     }
 
     // Update Enemies & Spawn their projectiles
-    const tankP = this.tank.physicsBody.body.GetPosition();
-    const playerPos: vec3 = [tankP.GetX(), tankP.GetY(), tankP.GetZ()];
     for (const enemy of this.enemies) {
        const res = enemy.update(ts, playerPos);
        if (res.didShoot && res.muzzlePos && res.dir) {
-           const quat = Quaternion.createFromEuler(enemy.rotation, 0, 0, 'YXZ');
            this.spawnProjectile(ProjectileType.SHELL, res.muzzlePos[0], res.muzzlePos[1], res.muzzlePos[2], res.dir, 'enemy', 1.0);
-           
            const exp = this.explosionPool.acquire() as Explosion;
            if (exp) {
                exp.reset(res.muzzlePos[0], res.muzzlePos[1], res.muzzlePos[2], [1.0, 0.5, 0.1], res.dir);
@@ -246,22 +282,11 @@ export class GameScreen extends Screen {
         return;
     }
 
-    // AUTO-FOLLOW CAMERA
-    // If user hasn't manually moved camera for 2 seconds, gently align it with the tank's hull rotation.
-    if (Date.now() - this.lastMouseManualTS > 2000) {
-        let diff = ((this.tank.rotation - this.cameraYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-        if (diff > Math.PI) diff -= Math.PI * 2;
-        this.cameraYaw += diff * 2.0 * (ts / 1000);
-    }
-
     // CINEMATIC ORBIT CAMERA
     const cy = this.cameraYaw;
     const cp = this.cameraPitch;
     const followDistance = this.cameraDistance;
 
-    // The orbit offset is defined by yaw and pitch.
-    // X and Z are derived from cos(cp), Y is derived from sin(cp).
-    // This allows seamless arc sweeps overhead.
     const camTargetPos = [
         playerPos[0] + Math.sin(cy) * Math.cos(cp) * followDistance,
         playerPos[1] + Math.max(1.5, Math.sin(cp) * followDistance),
@@ -269,17 +294,16 @@ export class GameScreen extends Screen {
     ] as vec3;
     
     const camPos = this.camera.getPosition();
-    const posAlpha = 1.0 - Math.exp(-12.0 * (ts / 1000)); // Cinematic smooth follow
+    const posAlpha = 1.0 - Math.exp(-8.0 * (ts / 1000));
     const finalCamPos = UT.VEC3_LERP(camPos, camTargetPos, posAlpha);
     
-    // Look ahead of the tank, along the camera's forward view
     const lookTargetGoal = [
         playerPos[0] - Math.sin(cy) * 5.0, 
         playerPos[1] + 1.5, 
         playerPos[2] - Math.cos(cy) * 5.0
     ] as vec3;
     
-    const lookAlpha = 1.0 - Math.exp(-15.0 * (ts / 1000)); 
+    const lookAlpha = 1.0 - Math.exp(-10.0 * (ts / 1000)); 
     this.cameraLookTarget = UT.VEC3_LERP(this.cameraLookTarget, lookTargetGoal, lookAlpha);
     
     if (!isNaN(finalCamPos[0])) {

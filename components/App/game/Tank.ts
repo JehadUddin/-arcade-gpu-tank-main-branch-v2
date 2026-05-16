@@ -102,8 +102,9 @@ export class Tank {
    * Updates physics and syncs mesh transforms.
    */
   update(ts: number, moveDir: { x: number, y: number }, fireNormal: boolean, fireGrenade: boolean, cameraYaw: number = 0, cameraPitch: number = 0): { normal: boolean, grenade: boolean, muzzlePos: vec3, muzzleDir: vec3 } {
-    const speed = 15;
-    const rotSpeed = 3.5;
+    const moveSpeed = 12;
+    const reverseSpeed = 8;
+    const rotSpeed = 90 * (Math.PI / 180);
 
     let didShootNormal = false;
     let didShootGrenade = false;
@@ -124,16 +125,16 @@ export class Tank {
     this.grenadeRecoil -= (ts / 1000) * 2; // Grenades have slower fire rate
     if (this.grenadeRecoil < 0) this.grenadeRecoil = 0;
     
-    // CLASSIC TANK CONTROLS (Resident Evil style)
+    // ARCADE TANK CONTROLS
     if (moveDir.x !== 0) {
       this.rotation -= moveDir.x * rotSpeed * (ts / 1000); 
     }
 
     const throttle = moveDir.y; // W is +1, S is -1
-    const isBraking = (throttle > 0 && this.velocity < 0) || (throttle < 0 && this.velocity > 0);
-    const targetVelocity = throttle * speed;
+    const targetVelocity = throttle > 0 ? throttle * moveSpeed : throttle * reverseSpeed;
     
-    const accelRate = throttle !== 0 ? (isBraking ? -20.0 : -6.0) : -15.0;
+    const isBraking = (throttle > 0 && this.velocity < 0) || (throttle < 0 && this.velocity > 0);
+    const accelRate = throttle !== 0 ? (isBraking ? -8.0 : -6.0) : -8.0;
     const accelAlphaValue = 1.0 - Math.exp(accelRate * (ts / 1000));
     this.velocity = UT.LERP(this.velocity, targetVelocity, accelAlphaValue);
 
