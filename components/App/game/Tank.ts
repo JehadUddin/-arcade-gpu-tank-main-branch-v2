@@ -68,7 +68,7 @@ export class Tank {
           mAngularDamping: 15.0, 
           mLinearDamping: 1.5,
           mMassPropertiesOverride: 10000.0, // Even heavier for grounded feel
-          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.4, 0) // Lower center of mass for stability
+          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -1.5, 0) // Lower center of mass for stability
       }
     });
 
@@ -146,22 +146,19 @@ export class Tank {
     // Create an upright version of the tank's yaw
     const uprightQuat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
     
-    // STABILIZATION: Neutralize Pitch and Roll via Angular Velocity
-    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
-    const tiltErrorX = -currentUpVec[2]; 
-    const tiltErrorZ = currentUpVec[0];  
-
-    // Apply strict yaw rotation by calculating angular velocity needed to reach this.rotation
+    // STRICT ARCADE YAW ROTATION
     const currentForward = currentQuat.rotateVector([0, 0, -1]);
     const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
     let bodyYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
     if (bodyYawDiff > Math.PI) bodyYawDiff -= Math.PI * 2;
     
-    // Aggressively steer towards target yaw and stabilize Pitch/Roll
+    const currentAngularVel = this.physicsBody.body.GetAngularVelocity();
     const targetAngularVelY = bodyYawDiff * 15.0; 
+    
+    // Only override the Y axis for steering, let Jolt physics handle pitch/roll from gravity and bumps
     gfx3JoltManager.bodyInterface.SetAngularVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(tiltErrorX * 12.0, targetAngularVelY, tiltErrorZ * 12.0)
+        new Gfx3Jolt.Vec3(currentAngularVel.GetX(), targetAngularVelY, currentAngularVel.GetZ())
     );
 
     // Apply movement along the current upright hull forward
