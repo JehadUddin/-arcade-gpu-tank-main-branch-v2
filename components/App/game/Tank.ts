@@ -124,48 +124,18 @@ export class Tank {
     this.grenadeRecoil -= (ts / 1000) * 2; // Grenades have slower fire rate
     if (this.grenadeRecoil < 0) this.grenadeRecoil = 0;
     
-    // SCREEN-RELATIVE MECH / TANK CONTROLS
-    let len = Math.sqrt(moveDir.x * moveDir.x + moveDir.y * moveDir.y);
-    let targetVelActual = 0;
-    
-    if (len > 0) {
-        // Normalize input vector
-        const nx = moveDir.x / len;
-        const ny = moveDir.y / len;
-        
-        // Camera Forward = [-sin(cameraYaw), 0, -cos(cameraYaw)]
-        // Camera Right = [cos(cameraYaw), 0, -sin(cameraYaw)]
-        const fX = -Math.sin(cameraYaw);
-        const fZ = -Math.cos(cameraYaw);
-        
-        const rX = Math.cos(cameraYaw);
-        const rZ = -Math.sin(cameraYaw);
-        
-        const worldDX = nx * rX + ny * fX;
-        const worldDZ = nx * rZ + ny * fZ;
-        
-        const targetHullYaw = Math.atan2(-worldDX, -worldDZ);
-        
-        let hullYawDiff = ((targetHullYaw - this.rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-        if (hullYawDiff > Math.PI) hullYawDiff -= Math.PI * 2;
-        
-        let moveSign = 1.0;
-        
-        // If angle difference is more than 90 degrees, reverse instead!
-        if (Math.abs(hullYawDiff) > Math.PI / 2) {
-            const reversedYaw = (targetHullYaw + Math.PI) % (Math.PI * 2);
-            hullYawDiff = ((reversedYaw - this.rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-            if (hullYawDiff > Math.PI) hullYawDiff -= Math.PI * 2;
-            
-            moveSign = -1.0; // Go backwards
-        }
-        
-        // Faster hull rotation (responsive mech feel)
-        this.rotation += Math.sign(hullYawDiff) * Math.min(Math.abs(hullYawDiff), rotSpeed * 2.0 * (ts / 1000));
-        targetVelActual = speed * moveSign;
+    // CLASSIC TANK CONTROLS (Resident Evil style)
+    if (moveDir.x !== 0) {
+      this.rotation -= moveDir.x * rotSpeed * (ts / 1000); 
     }
+
+    const throttle = -moveDir.y; 
+    const isBraking = (throttle > 0 && this.velocity < 0) || (throttle < 0 && this.velocity > 0);
+    const targetVelocity = throttle * speed;
     
-    this.velocity = UT.LERP(this.velocity, targetVelActual, 1.0 - Math.exp(-8.0 * (ts / 1000)));
+    const accelRate = throttle !== 0 ? (isBraking ? -20.0 : -6.0) : -15.0;
+    const accelAlphaValue = 1.0 - Math.exp(accelRate * (ts / 1000));
+    this.velocity = UT.LERP(this.velocity, targetVelocity, accelAlphaValue);
 
     const qPhysics = this.physicsBody.body.GetRotation();
     const currentQuat = new Quaternion(qPhysics.GetW(), qPhysics.GetX(), qPhysics.GetY(), qPhysics.GetZ());

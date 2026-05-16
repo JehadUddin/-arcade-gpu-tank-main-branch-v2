@@ -246,6 +246,14 @@ export class GameScreen extends Screen {
         return;
     }
 
+    // AUTO-FOLLOW CAMERA
+    // If user hasn't manually moved camera for 2 seconds, gently align it with the tank's hull rotation.
+    if (Date.now() - this.lastMouseManualTS > 2000) {
+        let diff = ((this.tank.rotation - this.cameraYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+        if (diff > Math.PI) diff -= Math.PI * 2;
+        this.cameraYaw += diff * 2.0 * (ts / 1000);
+    }
+
     // CINEMATIC ORBIT CAMERA
     const cy = this.cameraYaw;
     const cp = this.cameraPitch;

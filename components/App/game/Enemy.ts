@@ -48,8 +48,8 @@ export class Enemy {
     } catch (e) {
       console.warn('Enemy: Failed to load JSM models, falling back to boxes.', e);
       
-      const chassisColor: [number, number, number] = [0.8, 0.2, 0.2]; 
-      const turretColor: [number, number, number] = [0.6, 0.1, 0.1];
+      const chassisColor: [number, number, number] = [0.45, 0.55, 0.35]; // Slightly lighter green than player
+      const turretColor: [number, number, number] = [0.4, 0.5, 0.3];
       Enemy.bodyMesh = createBoxMesh(2.25, 0.9, 3.3, chassisColor);
       Enemy.turretMesh = createBoxMesh(1.65, 0.75, 1.65, turretColor);
       Enemy.barrelMesh = createBoxMesh(0.3, 0.3, 2.25, [0.2, 0.2, 0.2]);
@@ -76,6 +76,7 @@ export class Enemy {
   recoil: number = 0;
   shootCooldown: number = 0;
   hp: number = 100;
+  turretYaw: number = 0;
   currentUp: vec3 = [0, 1, 0];
   visualQuat: Quaternion = new Quaternion();
   
@@ -86,7 +87,7 @@ export class Enemy {
     }
 
     this.physicsBody = gfx3JoltManager.addBox({
-      width: 2.0, height: 1.2, depth: 2.4, // Encompass body and tracks
+      width: 3.45, height: 1.2, depth: 3.6, // Match exact volume of Player tank to prevent clipping/ground sinking
       x, y: y + 2.0, z, // Drop from air to handle uneven terrain correctly
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
@@ -94,7 +95,7 @@ export class Enemy {
           mAngularDamping: 15.0, 
           mLinearDamping: 2.0,
           mMassPropertiesOverride: 10000.0,
-          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.3, 0)
+          mCenterOfMassOffset: new Gfx3Jolt.Vec3(0, -0.4, 0)
       }
     });
   }
@@ -218,8 +219,13 @@ export class Enemy {
     let muzzlePos: vec3 | undefined = undefined;
     let dir: vec3 | undefined = undefined;
 
+    // Turret aiming (independently tracks target)
+    let turretYawDiff = ((targetAngle - this.turretYaw) % PI2 + PI2) % PI2;
+    if (turretYawDiff > Math.PI) turretYawDiff -= Math.PI * 2;
+    this.turretYaw += Math.sign(turretYawDiff) * Math.min(Math.abs(turretYawDiff), 3.5 * (ts / 1000));
+
     // Shoot Logic
-    if (dist < 40 && Math.abs(bodyYawDiff) < 0.2 && this.shootCooldown <= 0) {
+    if (dist < 40 && Math.abs(turretYawDiff) < 0.3 && Math.abs(bodyYawDiff) < 1.0 && this.shootCooldown <= 0) {
         const muzzleData = this.getMuzzleData(this.visualQuat);
         muzzlePos = muzzleData.muzzlePos;
         dir = muzzleData.dir;
@@ -237,8 +243,11 @@ export class Enemy {
     const origin: vec3 = [pos.GetX(), pos.GetY() - 0.15, pos.GetZ()];
     const bodyMatrix = UT.MAT4_TRANSFORM(origin, [0, 0, 0], [1, 1, 1], q);
     
+    const localYaw = (this.turretYaw - this.rotation);
+    const localYawQ = Quaternion.createFromEuler(localYaw, 0, 0, 'YXZ');
+
     const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
-    const turretMatrix = turretPivotMatrix; // Turret faces same direction as body
+    const turretMatrix = UT.MAT4_MULTIPLY(turretPivotMatrix, localYawQ.toMatrix4());
     
     const visualRecoilValue = this.recoil > 0 ? this.recoil * 0.45 : 0;
     const barrelPivotMatrix = UT.MAT4_MULTIPLY(turretMatrix, UT.MAT4_TRANSLATE(0, 0.1, -1.2 + visualRecoilValue));
@@ -280,8 +289,11 @@ export class Enemy {
     syncRigid(Enemy.trackRMesh, [1.425, -0.15, 0]);
     syncRigid(Enemy.engineMesh, [0, 0.3, 1.8]);
 
+    const localYaw = (this.turretYaw - this.rotation);
+    const localYawQ = Quaternion.createFromEuler(localYaw, 0, 0, 'YXZ');
+
     const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
-    const turretMatrix = turretPivotMatrix; 
+    const turretMatrix = UT.MAT4_MULTIPLY(turretPivotMatrix, localYawQ.toMatrix4()); 
     gfx3MeshRenderer.drawMesh(Enemy.turretMesh, turretMatrix);
 
     const visualRecoilValue = this.recoil > 0 ? this.recoil * 0.45 : 0;
