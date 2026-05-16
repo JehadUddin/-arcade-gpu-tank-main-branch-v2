@@ -17,6 +17,8 @@ export class Enemy {
   static trackLMesh: Gfx3Mesh;
   static trackRMesh: Gfx3Mesh;
   static engineMesh: Gfx3Mesh;
+  static hatchMesh: Gfx3Mesh;
+  static antennaMesh: Gfx3Mesh;
   static projMesh: Gfx3Mesh;
   static hpGreen: Gfx3Mesh;
   static hpRed: Gfx3Mesh;
@@ -48,16 +50,18 @@ export class Enemy {
       
       const chassisColor: [number, number, number] = [0.8, 0.2, 0.2]; 
       const turretColor: [number, number, number] = [0.6, 0.1, 0.1];
-      Enemy.bodyMesh = createBoxMesh(1.5, 0.6, 2.2, chassisColor);
-      Enemy.turretMesh = createBoxMesh(1.1, 0.5, 1.1, turretColor);
-      Enemy.barrelMesh = createBoxMesh(0.2, 0.2, 1.5, [0.2, 0.2, 0.2]);
+      Enemy.bodyMesh = createBoxMesh(2.25, 0.9, 3.3, chassisColor);
+      Enemy.turretMesh = createBoxMesh(1.65, 0.75, 1.65, turretColor);
+      Enemy.barrelMesh = createBoxMesh(0.3, 0.3, 2.25, [0.2, 0.2, 0.2]);
     }
 
     const trackColor: [number, number, number] = [0.15, 0.15, 0.15];
     const engineColor: [number, number, number] = [0.2, 0.2, 0.2];
-    Enemy.trackLMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
-    Enemy.trackRMesh = createBoxMesh(0.4, 0.6, 2.4, trackColor);
-    Enemy.engineMesh = createBoxMesh(1.2, 0.4, 0.6, engineColor);
+    Enemy.trackLMesh = createBoxMesh(0.6, 0.9, 3.6, trackColor);
+    Enemy.trackRMesh = createBoxMesh(0.6, 0.9, 3.6, trackColor);
+    Enemy.engineMesh = createBoxMesh(1.8, 0.6, 0.9, engineColor);
+    Enemy.hatchMesh = createBoxMesh(0.6, 0.15, 0.6, [0.15, 0.15, 0.15]);
+    Enemy.antennaMesh = createBoxMesh(0.05, 1.5, 0.05, [0.1, 0.1, 0.1]);
     Enemy.projMesh = createBoxMesh(0.6, 0.6, 0.6, [1.0, 0.2, 0.0]);
     Enemy.hpGreen = createUnitBoxMesh([0, 1, 0]);
     Enemy.hpRed = createUnitBoxMesh([1, 0, 0]);
@@ -229,27 +233,25 @@ export class Enemy {
 
   
   getMuzzleData(q: Quaternion): { muzzlePos: vec3, dir: vec3 } {
-    const direction = q.rotateVector([0, 0, -1]); 
-    const currentRot = this.physicsBody.body.GetRotation();
-    const bodyQ = new Quaternion(currentRot.GetW(), currentRot.GetX(), currentRot.GetY(), currentRot.GetZ());
-    
-    const visualRecoil = this.recoil > 0 ? this.recoil * 0.3 : 0;
-    const barrelRelativePos = bodyQ.rotateVector([0, 0, -0.8 + visualRecoil]);
     const pos = this.physicsBody.body.GetPosition();
-    const bPos = [pos.GetX() + barrelRelativePos[0], pos.GetY() + 0.45 + barrelRelativePos[1], pos.GetZ() + barrelRelativePos[2]];
-
-    // Barrel length is 1.5, so half-length is 0.75. 
-    // We add a small offset to ensure it's just outside the tip.
-    const tipOffset = 0.85; 
-    const startPos = [
-      bPos[0] + direction[0] * tipOffset,
-      bPos[1] + direction[1] * tipOffset,
-      bPos[2] + direction[2] * tipOffset,
-    ];
+    const origin: vec3 = [pos.GetX(), pos.GetY() - 0.15, pos.GetZ()];
+    const bodyMatrix = UT.MAT4_TRANSFORM(origin, [0, 0, 0], [1, 1, 1], q);
+    
+    const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
+    const turretMatrix = turretPivotMatrix; // Turret faces same direction as body
+    
+    const visualRecoilValue = this.recoil > 0 ? this.recoil * 0.45 : 0;
+    const barrelPivotMatrix = UT.MAT4_MULTIPLY(turretMatrix, UT.MAT4_TRANSLATE(0, 0.1, -1.2 + visualRecoilValue));
+    
+    const muzzleLocalPos = [0, 0, -1.125, 1];
+    const muzzleWorldPosVec4 = UT.MAT4_MULTIPLY_BY_VEC4(barrelPivotMatrix, muzzleLocalPos);
+    
+    const muzzleWorldDirVec4 = UT.MAT4_MULTIPLY_BY_VEC4(barrelPivotMatrix, [0, 0, -1, 0]);
+    const muzzleWorldDir = UT.VEC3_NORMALIZE([muzzleWorldDirVec4[0], muzzleWorldDirVec4[1], muzzleWorldDirVec4[2]]);
     
     return {
-       muzzlePos: [startPos[0], startPos[1], startPos[2]] as vec3,
-       dir: [direction[0], direction[1], direction[2]] as vec3
+       muzzlePos: [muzzleWorldPosVec4[0], muzzleWorldPosVec4[1], muzzleWorldPosVec4[2]] as vec3,
+       dir: muzzleWorldDir
     };
   }
 
@@ -260,36 +262,39 @@ export class Enemy {
     const ZERO: vec3 = [0,0,0];
 
     const pos = this.physicsBody.body.GetPosition();
-    const q = this.visualQuat;
+    const origin: vec3 = [pos.GetX(), pos.GetY() - 0.15, pos.GetZ()];
     
-    // Mesh alignment: Physics box is 0.8 high, Body mesh is 0.6.
-    // Center of physics is at 0.4 (local). To align mesh floor to physics floor:
-    // MeshCenterY = PhysicsCenterY - (0.8/2 - 0.6/2) = PhysicsCenterY - 0.1.
-    const origin: vec3 = [pos.GetX(), pos.GetY() - 0.1, pos.GetZ()];
+    const bodyRecoil = this.recoil > 0 ? this.recoil * 0.05 : 0;
+    const recoilQ = Quaternion.createFromEuler(0, bodyRecoil, 0, 'YXZ');
+    const finalVisualQ = this.visualQuat.mul(recoilQ.w, recoilQ.x, recoilQ.y, recoilQ.z);
 
-    const matBody = UT.MAT4_TRANSFORM(origin, ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.bodyMesh, matBody);
+    const bodyMatrix = UT.MAT4_TRANSFORM(origin, ZERO, scale, finalVisualQ);
+    gfx3MeshRenderer.drawMesh(Enemy.bodyMesh, bodyMatrix);
 
-    const trackOffsetL = q.rotateVector([-0.8, -0.1, 0]);
-    const matTrackL = UT.MAT4_TRANSFORM([origin[0] + trackOffsetL[0], origin[1] + trackOffsetL[1], origin[2] + trackOffsetL[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.trackLMesh, matTrackL);
+    const syncRigid = (mesh: Gfx3Mesh, localPos: vec3) => {
+        const localMatrix = UT.MAT4_TRANSFORM(localPos, [0, 0, 0], [1, 1, 1], new Quaternion());
+        gfx3MeshRenderer.drawMesh(mesh, UT.MAT4_MULTIPLY(bodyMatrix, localMatrix));
+    };
 
-    const trackOffsetR = q.rotateVector([0.8, -0.1, 0]);
-    const matTrackR = UT.MAT4_TRANSFORM([origin[0] + trackOffsetR[0], origin[1] + trackOffsetR[1], origin[2] + trackOffsetR[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.trackRMesh, matTrackR);
+    syncRigid(Enemy.trackLMesh, [-1.425, -0.15, 0]);
+    syncRigid(Enemy.trackRMesh, [1.425, -0.15, 0]);
+    syncRigid(Enemy.engineMesh, [0, 0.3, 1.8]);
 
-    const engineOffset = q.rotateVector([0, 0.2, 1.2]);
-    const matEngine = UT.MAT4_TRANSFORM([origin[0] + engineOffset[0], origin[1] + engineOffset[1], origin[2] + engineOffset[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.engineMesh, matEngine);
+    const turretPivotMatrix = UT.MAT4_MULTIPLY(bodyMatrix, UT.MAT4_TRANSLATE(0, 0.85, 0));
+    const turretMatrix = turretPivotMatrix; 
+    gfx3MeshRenderer.drawMesh(Enemy.turretMesh, turretMatrix);
 
-    const turretOffset = q.rotateVector([0, 0.45, 0]);
-    const matTurret = UT.MAT4_TRANSFORM([origin[0] + turretOffset[0], origin[1] + turretOffset[1], origin[2] + turretOffset[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.turretMesh, matTurret);
+    const visualRecoilValue = this.recoil > 0 ? this.recoil * 0.45 : 0;
+    const barrelPivotMatrix = UT.MAT4_MULTIPLY(turretMatrix, UT.MAT4_TRANSLATE(0, 0.1, -1.2 + visualRecoilValue));
+    gfx3MeshRenderer.drawMesh(Enemy.barrelMesh, barrelPivotMatrix);
+    
+    const syncToTurret = (mesh: Gfx3Mesh, localPos: vec3) => {
+        const localMatrix = UT.MAT4_TRANSLATE(localPos[0], localPos[1], localPos[2]);
+        gfx3MeshRenderer.drawMesh(mesh, UT.MAT4_MULTIPLY(turretMatrix, localMatrix));
+    };
 
-    const visualRecoil = this.recoil > 0 ? this.recoil * 0.3 : 0;
-    const barrelRelativePos = q.rotateVector([0, 0, -0.8 + visualRecoil]);
-    const matBarrel = UT.MAT4_TRANSFORM([origin[0] + turretOffset[0] + barrelRelativePos[0], origin[1] + turretOffset[1] + barrelRelativePos[1], origin[2] + turretOffset[2] + barrelRelativePos[2]], ZERO, scale, q);
-    gfx3MeshRenderer.drawMesh(Enemy.barrelMesh, matBarrel);
+    syncToTurret(Enemy.hatchMesh, [0, 0.375 + 0.075, 0.3]);
+    syncToTurret(Enemy.antennaMesh, [-0.6, 0.375 + 0.75, 0.6]);
   }
 
   drawHealthBar(origin: vec3, hp: number, maxHp: number, cameraYaw: number = 0) {

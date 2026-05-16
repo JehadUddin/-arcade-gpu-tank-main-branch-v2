@@ -159,7 +159,7 @@ export class GameScreen extends Screen {
        this.cameraPitch += data.movementY * 0.005;
        this.lastMouseManualTS = Date.now();
        
-       this.cameraPitch = Math.max(-0.25, Math.min(0.2, this.cameraPitch));
+       this.cameraPitch = Math.max(0.05, Math.min(1.2, this.cameraPitch));
     }
   };
 
@@ -246,34 +246,32 @@ export class GameScreen extends Screen {
         return;
     }
 
-    // CINEMATIC ARCADE CAMERA SMOOTH FOLLOW
-    // targetPosition = tank.position - tank.forward * followDistance + Vector3(0, heightOffset, 0)
-    const sinTank = Math.sin(this.tank.rotation);
-    const cosTank = Math.cos(this.tank.rotation);
-    const tankForwardX = -sinTank;
-    const tankForwardZ = -cosTank;
-
+    // CINEMATIC ORBIT CAMERA
+    const cy = this.cameraYaw;
+    const cp = this.cameraPitch;
     const followDistance = this.cameraDistance;
-    const heightOffset = 8.0;
 
+    // The orbit offset is defined by yaw and pitch.
+    // X and Z are derived from cos(cp), Y is derived from sin(cp).
+    // This allows seamless arc sweeps overhead.
     const camTargetPos = [
-        playerPos[0] - tankForwardX * followDistance,
-        playerPos[1] + heightOffset,
-        playerPos[2] - tankForwardZ * followDistance
+        playerPos[0] + Math.sin(cy) * Math.cos(cp) * followDistance,
+        playerPos[1] + Math.max(1.5, Math.sin(cp) * followDistance),
+        playerPos[2] + Math.cos(cy) * Math.cos(cp) * followDistance
     ] as vec3;
     
     const camPos = this.camera.getPosition();
-    const posAlpha = 1.0 - Math.exp(-6.0 * (ts / 1000)); // Cinematic smooth follow
+    const posAlpha = 1.0 - Math.exp(-12.0 * (ts / 1000)); // Cinematic smooth follow
     const finalCamPos = UT.VEC3_LERP(camPos, camTargetPos, posAlpha);
     
-    // Look slightly ahead of the tank
+    // Look ahead of the tank, along the camera's forward view
     const lookTargetGoal = [
-        playerPos[0] + tankForwardX * 5.0, 
+        playerPos[0] - Math.sin(cy) * 5.0, 
         playerPos[1] + 1.5, 
-        playerPos[2] + tankForwardZ * 5.0
+        playerPos[2] - Math.cos(cy) * 5.0
     ] as vec3;
     
-    const lookAlpha = 1.0 - Math.exp(-8.0 * (ts / 1000)); 
+    const lookAlpha = 1.0 - Math.exp(-15.0 * (ts / 1000)); 
     this.cameraLookTarget = UT.VEC3_LERP(this.cameraLookTarget, lookTargetGoal, lookAlpha);
     
     if (!isNaN(finalCamPos[0])) {
