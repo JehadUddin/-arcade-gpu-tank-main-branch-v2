@@ -23,7 +23,7 @@ Tracking all issues, from critical bugs to minor suggestions.
 -   **[RESOLVED] EULER CRASH**: Fixed `toEuler` not a function error in `Tank.ts` and `Enemy.ts`.
 -   **[RESOLVED] PHYSICS STEERING**: Refactored hull rotation to use angular velocity, allowing realistic environmental interactions and "bounce" during collisions.
 -   **[RESOLVED] AIMING STABILITY**: Camera auto-follow now respects manual interaction, preventing the viewpoint from snapping while the player is actively tracking targets.
--   **[RESOLVED] CAMERA SMOOTHING**: Refined interpolation for a better "Modern Arcade" tactical view.
+-   **[RESOLVED] COLLISION INSTABILITY**: Tank collided incorrectly and spun out of control because `SetRotation` overrode the physics solver every frame. Fixed by letting Pitch and Roll resolve dynamically through the Jolt physics engine while injecting precise target angular velocity for the Yaw steering.
 
 ## Warning (Unexpected Behavior)
 

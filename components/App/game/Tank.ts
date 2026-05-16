@@ -129,12 +129,39 @@ export class Tank {
       this.rotation -= moveDir.x * rotSpeed * (ts / 1000); 
     }
     
+    const qPhysics = this.physicsBody.body.GetRotation();
+    const currentQuat = new Quaternion(qPhysics.GetW(), qPhysics.GetX(), qPhysics.GetY(), qPhysics.GetZ());
+    
+    // We want the physics body to maintain its pitch and roll (for hills/bumps)
+    // but follow our strict Y-axis rotation (this.rotation)
+    
+    // Create an upright version of the tank's yaw
     const uprightQuat = Quaternion.createFromEuler(this.rotation, 0, 0, 'YXZ');
     
-    // Lock physics rotation to strictly our Y axis rotation
-    const joltQuat = new Gfx3Jolt.Quat(uprightQuat.x, uprightQuat.y, uprightQuat.z, uprightQuat.w);
-    gfx3JoltManager.bodyInterface.SetRotation(this.physicsBody.body.GetID(), joltQuat, Gfx3Jolt.EActivation_Activate);
-    gfx3JoltManager.bodyInterface.SetAngularVelocity(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(0, 0, 0));
+    // STABILIZATION TORQUE: Neutralize Pitch and Roll (X, Z) to keep the tank upright.
+    const currentUpVec = currentQuat.rotateVector([0, 1, 0]);
+    const tiltErrorX = -currentUpVec[2]; 
+    const tiltErrorZ = currentUpVec[0];  
+    const stabilityAlpha = 6000000.0;
+    
+    gfx3JoltManager.bodyInterface.AddTorque(
+        this.physicsBody.body.GetID(), 
+        new Gfx3Jolt.Vec3(tiltErrorX * stabilityAlpha, 0, tiltErrorZ * stabilityAlpha)
+    );
+
+    // Apply strict yaw rotation by calculating angular velocity needed to reach this.rotation
+    const currentForward = currentQuat.rotateVector([0, 0, -1]);
+    const currentYaw = Math.atan2(-currentForward[0], -currentForward[2]);
+    let bodyYawDiff = ((this.rotation - currentYaw) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    if (bodyYawDiff > Math.PI) bodyYawDiff -= Math.PI * 2;
+    
+    const currentAngularVel = this.physicsBody.body.GetAngularVelocity();
+    // Aggressively steer towards target yaw
+    const targetAngularVelY = bodyYawDiff * 15.0; 
+    gfx3JoltManager.bodyInterface.SetAngularVelocity(
+        this.physicsBody.body.GetID(), 
+        new Gfx3Jolt.Vec3(currentAngularVel.GetX(), targetAngularVelY, currentAngularVel.GetZ())
+    );
 
     // STRICT ARCADE FORWARD MOVEMENT
     const throttle = -moveDir.y; 
@@ -145,16 +172,26 @@ export class Tank {
     const accelAlphaValue = 1.0 - Math.exp(accelRate * (ts / 1000));
     this.velocity = UT.LERP(this.velocity, targetVelocity, accelAlphaValue);
 
-    const pos = this.physicsBody.body.GetPosition();
-    const forwardVecActual = uprightQuat.rotateVector([0, 0, -1]); // Use -Z for forward
+    const forwardVecActual = uprightQuat.rotateVector([0, 0, -1]); // Use strictly Yaw forward for arcade feel
     const currentJoltVel = this.physicsBody.body.GetLinearVelocity();
+    
+    // Lerp linear velocity slightly to allow physics to push back on collisions 
+    const velAlpha = 1.0 - Math.exp(-20.0 * (ts / 1000));
+    const targetVelX = forwardVecActual[0] * this.velocity;
+    const targetVelZ = forwardVecActual[2] * this.velocity;
     
     gfx3JoltManager.bodyInterface.SetLinearVelocity(
         this.physicsBody.body.GetID(), 
-        new Gfx3Jolt.Vec3(forwardVecActual[0] * this.velocity, currentJoltVel.GetY(), forwardVecActual[2] * this.velocity)
+        new Gfx3Jolt.Vec3(
+            UT.LERP(currentJoltVel.GetX(), targetVelX, velAlpha), 
+            currentJoltVel.GetY(), 
+            UT.LERP(currentJoltVel.GetZ(), targetVelZ, velAlpha)
+        )
     );
 
-    let visualQuat = uprightQuat;
+    let visualQuat = currentQuat;
+
+    const pos = this.physicsBody.body.GetPosition();
 
     // Sync Visuals
     const q = visualQuat;
